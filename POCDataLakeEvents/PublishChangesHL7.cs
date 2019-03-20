@@ -16,7 +16,7 @@ namespace POCDataLakeEvents
             collectionName: "messages",
             ConnectionStringSetting = "CosmosDBConnectionHL7",
             CreateLeaseCollectionIfNotExists = true,
-            StartFromBeginning =true,
+            StartFromBeginning = false,
             MaxItemsPerInvocation =1000,
             LeaseCollectionPrefix = "hl7pub1",
             LeaseCollectionName = "leases")]IReadOnlyList<Document> input,
