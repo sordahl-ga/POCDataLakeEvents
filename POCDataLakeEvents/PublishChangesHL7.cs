@@ -10,6 +10,7 @@ namespace POCDataLakeEvents
 {
     public static class PublishChangesHL7
     {
+      
         [FunctionName("PublishChangesHL7")]
         public static void Run([CosmosDBTrigger(
             databaseName: "hl7json",

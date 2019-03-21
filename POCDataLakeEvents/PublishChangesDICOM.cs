@@ -10,6 +10,7 @@ namespace POCDataLakeEvents
 {
     public static class PublishChangesDICOM
     {
+        
         [FunctionName("PublishChangesDICOM")]
         public static void Run([CosmosDBTrigger(
             databaseName: "health",
@@ -17,7 +18,7 @@ namespace POCDataLakeEvents
             ConnectionStringSetting = "CosmosDBConnectionDICOM",
             CreateLeaseCollectionIfNotExists = true,
             MaxItemsPerInvocation = 1000,
-            StartFromBeginning =true,
+            StartFromBeginning =false,
             LeaseCollectionPrefix = "dicompub",
             LeaseCollectionName = "leases")]IReadOnlyList<Document> input,
           [EventHub("dicomevents", Connection = "EventHubConnectionString")] ICollector<EventData> outputMessages,

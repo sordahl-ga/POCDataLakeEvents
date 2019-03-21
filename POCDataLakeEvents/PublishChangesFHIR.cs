@@ -10,6 +10,7 @@ namespace POCDataLakeEvents
 {
     public static class PublishChangesFHIR
     {
+      
         [FunctionName("PublishChangesFHIR")]
         public static void Run([CosmosDBTrigger(
             databaseName: "health",
@@ -17,7 +18,7 @@ namespace POCDataLakeEvents
             ConnectionStringSetting = "CosmosDBConnectionFHIR",
             CreateLeaseCollectionIfNotExists = true,
             MaxItemsPerInvocation = 1000,
-            StartFromBeginning = true,
+            StartFromBeginning = false,
             LeaseCollectionPrefix = "fhirpub",
             LeaseCollectionName = "leases")]IReadOnlyList<Document> input,
           [EventHub("fhirevents", Connection = "EventHubConnectionString")] ICollector<EventData> outputMessages,

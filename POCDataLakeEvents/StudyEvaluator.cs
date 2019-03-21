@@ -12,6 +12,7 @@ using Newtonsoft.Json.Linq;
 using System.Globalization;
 using Microsoft.Azure.Documents;
 using Microsoft.Azure.Documents.Linq;
+using System.Collections.Generic;
 
 namespace POCDataLakeEvents
 {
@@ -19,6 +20,10 @@ namespace POCDataLakeEvents
     {
         public bool isEligable { get; set; }
         public string patId { get; set; }
+        public string patName { get; set; }
+        public string patGender { get; set; }
+        public string providerName { get; set; }
+        public string providerId { get; set; }
         public int ageYearsAtStudyDate { get; set; }
         public DateTime birthDate { get; set; }
         public DateTime studyDate { get; set; }
@@ -26,6 +31,7 @@ namespace POCDataLakeEvents
         public float a1cValue { get; set; }
         public DateTime a1cLastTestDate { get; set; }
         public string a1cLastTestId { get; set; }
+        public string a1cOrderStatus { get; set; }
     }
     public static class StudyEvaluator
     {
@@ -35,7 +41,7 @@ namespace POCDataLakeEvents
             [CosmosDB(
                 databaseName:"hl7json",
                 collectionName :"messages",
-                ConnectionStringSetting = "CosmosDBConnectionHL7POC")] DocumentClient client,
+                ConnectionStringSetting = "CosmosDBConnectionHL7")] DocumentClient client,
             ILogger log)
         {
             log.LogInformation("Study Evaluator trigger fired");
@@ -53,13 +59,17 @@ namespace POCDataLakeEvents
                 if (maxa1c == null) maxa1c = "8.0";
                 if (minage == null) minage = "18";
                 if (maxage == null) maxage = "75";
-                if (a1cstring == null) a1cstring = "A1C";
+                if (a1cstring == null) a1cstring = "HBA1C";
                 if (studydate == null) studydate = DateTime.Now.ToString("yyyyMMdd");
                 if (daysback == null) daysback = "180";
                 string requestBody = await new StreamReader(req.Body).ReadToEndAsync();
                 var obj = JObject.Parse(requestBody);
                 string patid = (string)obj["hl7message"]["PID"]["PID.3"]["PID.3.1"];
+                string patname = (string)obj["hl7message"]["PID"]["PID.5"]["PID.5.2"] + "," + (string)obj["hl7message"]["PID"]["PID.5"]["PID.5.1"];
+                string patgender = (string)obj["hl7message"]["PID"]["PID.8"];
                 retVal.patId = patid;
+                retVal.patName = patname;
+                retVal.patGender = patgender;
                 //Criteria 1: Age 18 to 75 as of trial enrollment date
                 DateTime dts = ConvertHL7Date(studydate);
                 DateTime bd = ConvertHL7Date((string)obj["hl7message"]["PID"]["PID.7"]);
@@ -76,18 +86,23 @@ namespace POCDataLakeEvents
                 int iMaxAge = int.Parse(maxage);
                 if (age >= iMinAge && age <= iMaxAge) dateelig = true;
                 //Criteria 2&3 A1C Lab Test obtained in past 6 months and less than 8
-                var options = new FeedOptions
-                {
-                    MaxItemCount = 100,
-                    EnableCrossPartitionQuery = true,
-                    MaxDegreeOfParallelism = 10,
-                    MaxBufferedItemCount = 100
-                };
-                string a1cquery = "select c as content from c where c['hl7message']['MSH']['MSH.9']['MSH.9.1']='ORU' and c['hl7message']['PID']['PID.3']['PID.3.1']='~patid~' and CONTAINS(c['hl7message']['OBX']['OBX.3']['OBX.3.2'],'~a1cstring~') order by c['hl7message']['MSH']['MSH.7'] desc".Replace("~patid~", patid).Replace("~a1cstring~",a1cstring);
+                string a1cquery = "select top 100 c as content from c where c['hl7message']['MSH']['MSH.9']['MSH.9.1']='ORU' and c['hl7message']['PID']['PID.3']['PID.3.1']='~patid~' and c['hl7message']['OBR']['OBR.4']['OBR.4.1']='~a1cstring~' order by c['hl7message']['OBX']['OBX.14'] desc".Replace("~patid~", patid).Replace("~a1cstring~", a1cstring);
                 var collection = UriFactory.CreateDocumentCollectionUri(System.Environment.GetEnvironmentVariable("DBNAMEHL7"), System.Environment.GetEnvironmentVariable("COLLECTIONHL7"));
-                var docq = client.CreateDocumentQuery<Document>(collection, a1cquery, options).AsDocumentQuery();
-                var rslt = await docq.ExecuteNextAsync<Document>();
-                foreach (Document doc in rslt)
+                int pagesize = 100;
+                var options = new FeedOptions() { MaxItemCount = pagesize, EnableCrossPartitionQuery = true };
+                var continuationToken = string.Empty;
+                var allResults = new List<Document>();
+                do
+                {
+                    if (!string.IsNullOrEmpty(continuationToken))
+                    {
+                        options.RequestContinuation = continuationToken;
+                    }
+                    var query = await client.CreateDocumentQuery<Document>(collection, a1cquery, options).ToPagedResults();
+                    continuationToken = query.ContinuationToken;
+                    allResults.AddRange(query.Results);
+                } while (!string.IsNullOrEmpty(continuationToken));
+                foreach (Document doc in allResults)
                 {
 
                     var docobj = (JObject)(dynamic)doc;
@@ -105,11 +120,15 @@ namespace POCDataLakeEvents
                             float num = float.Parse((string)docobj["content"]["hl7message"]["OBX"]["OBX.5"]["OBX.5.2"]);
                             if ((comp.Equals("<") || comp.Equals("=")) && (num > 0 && num < fma1c))
                             {
+
                                 a1celig = true;
                                 retVal.a1cComparator = comp;
                                 retVal.a1cValue = num;
                                 retVal.a1cLastTestDate = testdate;
                                 retVal.a1cLastTestId = msgid;
+                                retVal.providerId = (string)docobj["content"]["hl7message"]["OBR"]["OBR.16"]["OBR.16.1"];
+                                retVal.providerName = (string)docobj["content"]["hl7message"]["OBR"]["OBR.16"]["OBR.16.2"] + "," + (string)docobj["content"]["hl7message"]["OBR"]["OBR.16"]["OBR.16.3"];
+                                retVal.a1cOrderStatus = (string)docobj["content"]["hl7message"]["OBR"]["OBR.25"];
                                 break;
                             }
                         }
@@ -123,6 +142,9 @@ namespace POCDataLakeEvents
                                 retVal.a1cValue = num;
                                 retVal.a1cLastTestDate = testdate;
                                 retVal.a1cLastTestId = msgid;
+                                retVal.providerId = (string)docobj["content"]["hl7message"]["OBR"]["OBR.16"]["OBR.16.1"];
+                                retVal.providerName = (string)docobj["content"]["hl7message"]["OBR"]["OBR.16"]["OBR.16.2"] + "," + (string)docobj["content"]["hl7message"]["OBR"]["OBR.16"]["OBR.16.3"];
+                                retVal.a1cOrderStatus = (string)docobj["content"]["hl7message"]["OBR"]["OBR.25"];
                                 break;
                             }
                         }
